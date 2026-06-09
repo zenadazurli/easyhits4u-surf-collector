@@ -1,30 +1,26 @@
 #!/usr/bin/env python3
 # multi_account_collector_optimized.py
-# Multi-account collector ottimizzato per Supabase (cookie dal cron job)
+# Legge i cookie da active_cookies.json
 
 import os
 import time
 import threading
-import signal
 import sys
+import json
 import requests
 import cv2
 import numpy as np
 from datetime import datetime
-from supabase import create_client
 from datasets import load_dataset
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==================== CONFIGURAZIONE ====================
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-HF_TOKEN = os.environ.get("HF_TOKEN")  # Opzionale, per Hugging Face
-
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", 5))
 STAGGERED_START_DELAY = int(os.environ.get("STAGGERED_START_DELAY", 3))
 DIM = 64
+COOKIE_FILE = "active_cookies.json"  # File generato dal cron job
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -33,12 +29,6 @@ def log(msg):
 def load_faiss_dataset():
     log("📥 Caricamento dataset FAISS...")
     try:
-        # Login opzionale a Hugging Face (per rate limit)
-        if HF_TOKEN:
-            from huggingface_hub import login
-            login(token=HF_TOKEN)
-        
-        # Carica dataset senza trust_remote_code (deprecato)
         dataset = load_dataset("zenadazurli/easyhits4u-dataset")
         data = dataset["train"] if "train" in dataset else dataset
     except Exception as e:
@@ -139,50 +129,33 @@ def crop_safe(img, coords):
         return None
     return img[y1:y2, x1:x2]
 
-# ==================== FUNZIONI PER SUPABASE ====================
-def get_active_cookies():
-    """Recupera tutti i cookie attivi da Supabase (tabella account_cookies)"""
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        log("❌ SUPABASE_URL o SUPABASE_KEY non impostati")
+# ==================== LEGGI COOKIE DA FILE ====================
+def get_active_cookies_from_file():
+    """Legge i cookie dal file JSON generato dal cron job"""
+    if not os.path.exists(COOKIE_FILE):
+        log(f"❌ File {COOKIE_FILE} non trovato. Assicurati che il cron job sia stato eseguito.")
         return []
     
     try:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        resp = supabase.table('account_cookies')\
-            .select('nome_utente, divella_format, email, status')\
-            .eq('status', 'active')\
-            .execute()
-        if not resp.data:
-            log("⚠️ Nessun cookie attivo trovato in Supabase")
+        with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            log(f"❌ Formato file non valido: deve essere una lista")
             return []
+        
+        # Converte nel formato atteso dal collector
         accounts = []
-        for row in resp.data:
-            cookie_str = row['divella_format']
+        for item in data:
             accounts.append({
-                'name': row['nome_utente'],
-                'email': row['email'],
-                'cookie_string': cookie_str
+                'name': item.get('name'),
+                'email': item.get('email'),
+                'cookie_string': item.get('divella_format')
             })
-        log(f"✅ Caricati {len(accounts)} cookie attivi da Supabase")
+        log(f"✅ Caricati {len(accounts)} cookie da {COOKIE_FILE}")
         return accounts
     except Exception as e:
-        log(f"❌ Errore connessione Supabase: {e}")
+        log(f"❌ Errore lettura file: {e}")
         return []
-
-def update_cookie_status(email, status):
-    """Aggiorna lo stato di un cookie (se scaduto)"""
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return
-    
-    try:
-        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        supabase.table('account_cookies')\
-            .update({'status': status, 'updated_at': datetime.now().isoformat()})\
-            .eq('email', email)\
-            .execute()
-        log(f"   📝 Cookie {email} -> {status}")
-    except Exception as e:
-        log(f"   ❌ Errore aggiornamento: {e}")
 
 # ==================== SURF ACCOUNT ====================
 def surf_account(account, X_fast, y_fast, classes_fast):
@@ -190,8 +163,6 @@ def surf_account(account, X_fast, y_fast, classes_fast):
     email = account['email']
     cookie_str = account['cookie_string']
     
-    # Estrae la parte dei cookie dalla stringa (formato: nome|cookie_string)
-    # La stringa è già nel formato Divella, la usiamo direttamente
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Cookie": cookie_str
@@ -215,10 +186,8 @@ def surf_account(account, X_fast, y_fast, classes_fast):
             
             if not urlid or not qpic:
                 log(f"[{account_name}] ⚠️ Cookie scaduto per {email}")
-                update_cookie_status(email, 'expired')
                 break
             
-            # Captcha a figure
             if picmap and len(picmap) > 0:
                 img_data = session.get(f"https://www.easyhits4u.com/simg/{qpic}.jpg", verify=False).content
                 img = cv2.imdecode(np.frombuffer(img_data, np.uint8), cv2.IMREAD_COLOR)
@@ -254,11 +223,8 @@ def surf_account(account, X_fast, y_fast, classes_fast):
                 captcha_count += 1
                 log(f"[{account_name}] ✅ OK #{captcha_count}")
                 time.sleep(2)
-            
-            # Captcha matematico (salva e continua)
             else:
                 log(f"[{account_name}] 🧮 Captcha matematico - SALVO")
-                # Qui puoi implementare il salvataggio su Supabase Storage
                 time.sleep(seconds)
                 continue
                 
@@ -270,24 +236,25 @@ def surf_account(account, X_fast, y_fast, classes_fast):
 # ==================== MAIN ====================
 def main():
     log("="*60)
-    log("🚀 MULTI-ACCOUNT SURF COLLECTOR (Supabase Ottimizzato)")
+    log("🚀 MULTI-ACCOUNT SURF COLLECTOR")
+    log(f"📁 Lettura cookie da: {COOKIE_FILE}")
     log("="*60)
     
-    # Carica dataset FAISS
+    # Carica dataset
     X_fast, y_fast, classes_fast = load_faiss_dataset()
     if X_fast is None:
-        log("❌ Dataset non caricato, esco")
+        log("❌ Dataset non caricato")
         return
     
-    # Recupera cookie da Supabase
-    accounts = get_active_cookies()
+    # Legge cookie da file
+    accounts = get_active_cookies_from_file()
     if not accounts:
-        log("❌ Nessun cookie attivo trovato")
+        log("❌ Nessun cookie trovato")
         return
     
-    log(f"📋 Account con cookie validi: {len(accounts)}")
+    log(f"📋 Account con cookie: {len(accounts)}")
     
-    # Avvia thread (uno per account)
+    # Avvia thread
     threads = []
     for account in accounts:
         while len(threads) >= MAX_CONCURRENT:
@@ -300,7 +267,6 @@ def main():
         threads.append(t)
         time.sleep(STAGGERED_START_DELAY)
     
-    # Attendi fine
     for t in threads:
         t.join()
     
@@ -310,5 +276,5 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        log("\n🛑 Interrotto dall'utente")
+        log("\n🛑 Interrotto")
         sys.exit(0)
