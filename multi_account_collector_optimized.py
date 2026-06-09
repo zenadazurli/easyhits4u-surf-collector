@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # multi_account_collector_optimized.py
-# Legge i cookie da active_cookies.json
+# Legge i cookie da active_cookies.json (generato dal cron job)
 
 import os
 import time
@@ -133,7 +133,7 @@ def crop_safe(img, coords):
 def get_active_cookies_from_file():
     """Legge i cookie dal file JSON generato dal cron job"""
     if not os.path.exists(COOKIE_FILE):
-        log(f"❌ File {COOKIE_FILE} non trovato. Assicurati che il cron job sia stato eseguito.")
+        log(f"⚠️ File {COOKIE_FILE} non ancora disponibile, in attesa del cron job...")
         return []
     
     try:
@@ -246,10 +246,11 @@ def main():
         log("❌ Dataset non caricato")
         return
     
-    # Legge cookie da file
+    # Legge cookie da file (se non esiste, aspetta)
     accounts = get_active_cookies_from_file()
     if not accounts:
-        log("❌ Nessun cookie trovato")
+        log(f"⚠️ Nessun cookie trovato. Il file {COOKIE_FILE} verrà creato dal cron job.")
+        log("   Il collector rimarrà in attesa...")
         return
     
     log(f"📋 Account con cookie: {len(accounts)}")
