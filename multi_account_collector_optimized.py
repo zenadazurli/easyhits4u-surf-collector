@@ -20,10 +20,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ==================== CONFIGURAZIONE ====================
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-
-# Se non vuoi usare le env var, inseriscili qui direttamente per debug
-# SUPABASE_URL = "https://ofijopixtpwahgbwyutc.supabase.co"
-# SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9maWpvcGl4dHB3YWhnYnd5dXRjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3NTkyODIxMiwiZXhwIjoyMDkxNTA0MjEyfQ.BkWb8EuUUJSUUgg3sepDmOdUzsXY7pjGjykQnPMK9q4"
+HF_TOKEN = os.environ.get("HF_TOKEN")  # Opzionale, per Hugging Face
 
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", 5))
 STAGGERED_START_DELAY = int(os.environ.get("STAGGERED_START_DELAY", 3))
@@ -36,7 +33,13 @@ def log(msg):
 def load_faiss_dataset():
     log("📥 Caricamento dataset FAISS...")
     try:
-        dataset = load_dataset("zenadazurli/easyhits4u-dataset", trust_remote_code=True)
+        # Login opzionale a Hugging Face (per rate limit)
+        if HF_TOKEN:
+            from huggingface_hub import login
+            login(token=HF_TOKEN)
+        
+        # Carica dataset senza trust_remote_code (deprecato)
+        dataset = load_dataset("zenadazurli/easyhits4u-dataset")
         data = dataset["train"] if "train" in dataset else dataset
     except Exception as e:
         log(f"⚠️ Errore caricamento dataset: {e}")
@@ -139,6 +142,10 @@ def crop_safe(img, coords):
 # ==================== FUNZIONI PER SUPABASE ====================
 def get_active_cookies():
     """Recupera tutti i cookie attivi da Supabase (tabella account_cookies)"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        log("❌ SUPABASE_URL o SUPABASE_KEY non impostati")
+        return []
+    
     try:
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         resp = supabase.table('account_cookies')\
@@ -150,7 +157,6 @@ def get_active_cookies():
             return []
         accounts = []
         for row in resp.data:
-            # Il divella_format è già in formato "nome_utente|cookie_string"
             cookie_str = row['divella_format']
             accounts.append({
                 'name': row['nome_utente'],
@@ -165,6 +171,9 @@ def get_active_cookies():
 
 def update_cookie_status(email, status):
     """Aggiorna lo stato di un cookie (se scaduto)"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    
     try:
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         supabase.table('account_cookies')\
@@ -181,8 +190,8 @@ def surf_account(account, X_fast, y_fast, classes_fast):
     email = account['email']
     cookie_str = account['cookie_string']
     
-    # Estrae i cookie dalla stringa (formato: nome|cookie_string)
-    # Il cookie_str contiene tutto, lo useremo direttamente negli headers
+    # Estrae la parte dei cookie dalla stringa (formato: nome|cookie_string)
+    # La stringa è già nel formato Divella, la usiamo direttamente
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Cookie": cookie_str
@@ -260,9 +269,6 @@ def surf_account(account, X_fast, y_fast, classes_fast):
 
 # ==================== MAIN ====================
 def main():
-    global running
-    running = True
-    
     log("="*60)
     log("🚀 MULTI-ACCOUNT SURF COLLECTOR (Supabase Ottimizzato)")
     log("="*60)
