@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs e dati temporanei
+*.log
+*.npz
+temp_*.jpg
+temp_*.png
+captcha_*.jpg
+errori/
+
+# File di configurazione (contengono chiavi)
+.env
+config_local.py
+
+# Database locali
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# File di backup
+*.bak
+*.backup
+
+# Hugging Face cache
+.huggingface/
