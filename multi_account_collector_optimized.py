@@ -1,29 +1,61 @@
 #!/usr/bin/env python3
 # multi_account_collector_optimized.py
-# Legge i cookie da active_cookies.json (generato dal cron job)
+# Legge i cookie da Supabase e fa surf
 
 import os
 import time
 import threading
 import sys
-import json
 import requests
 import cv2
 import numpy as np
 from datetime import datetime
+from supabase import create_client
 from datasets import load_dataset
 
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==================== CONFIGURAZIONE ====================
+# Leggi da variabili d'ambiente (impostate su Render)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://ofijopixtpwahgbwyutc.supabase.co")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
 MAX_CONCURRENT = int(os.environ.get("MAX_CONCURRENT", 5))
 STAGGERED_START_DELAY = int(os.environ.get("STAGGERED_START_DELAY", 3))
 DIM = 64
-COOKIE_FILE = "active_cookies.json"  # File generato dal cron job
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+def get_active_cookies():
+    if not SUPABASE_KEY:
+        log("❌ SUPABASE_KEY non impostata")
+        return []
+    
+    try:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        resp = supabase.table('account_cookies')\
+            .select('nome_utente, divella_format, email')\
+            .eq('status', 'active')\
+            .execute()
+        
+        if not resp.data:
+            log("⚠️ Nessun cookie attivo trovato")
+            return []
+        
+        accounts = []
+        for row in resp.data:
+            accounts.append({
+                'name': row['nome_utente'],
+                'email': row['email'],
+                'cookie_string': row['divella_format']
+            })
+        log(f"✅ Caricati {len(accounts)} cookie da Supabase")
+        return accounts
+    except Exception as e:
+        log(f"❌ Errore Supabase: {e}")
+        return []
 
 # ==================== CARICAMENTO DATASET FAISS ====================
 def load_faiss_dataset():
@@ -65,7 +97,7 @@ def centra_figura(image):
         return cv2.resize(image, (DIM, DIM))
     cnt = max(contours, key=cv2.contourArea)
     x, y, w, h = cv2.boundingRect(cnt)
-    crop = image[y:y+h, x:x+w]
+    crop = image[y:y+h, x:x+w)
     return cv2.resize(crop, (DIM, DIM))
 
 def estrai_descrittori(img):
@@ -128,34 +160,6 @@ def crop_safe(img, coords):
     if x2 <= x1 or y2 <= y1:
         return None
     return img[y1:y2, x1:x2]
-
-# ==================== LEGGI COOKIE DA FILE ====================
-def get_active_cookies_from_file():
-    """Legge i cookie dal file JSON generato dal cron job"""
-    if not os.path.exists(COOKIE_FILE):
-        log(f"⚠️ File {COOKIE_FILE} non ancora disponibile, in attesa del cron job...")
-        return []
-    
-    try:
-        with open(COOKIE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, list):
-            log(f"❌ Formato file non valido: deve essere una lista")
-            return []
-        
-        # Converte nel formato atteso dal collector
-        accounts = []
-        for item in data:
-            accounts.append({
-                'name': item.get('name'),
-                'email': item.get('email'),
-                'cookie_string': item.get('divella_format')
-            })
-        log(f"✅ Caricati {len(accounts)} cookie da {COOKIE_FILE}")
-        return accounts
-    except Exception as e:
-        log(f"❌ Errore lettura file: {e}")
-        return []
 
 # ==================== SURF ACCOUNT ====================
 def surf_account(account, X_fast, y_fast, classes_fast):
@@ -236,9 +240,12 @@ def surf_account(account, X_fast, y_fast, classes_fast):
 # ==================== MAIN ====================
 def main():
     log("="*60)
-    log("🚀 MULTI-ACCOUNT SURF COLLECTOR")
-    log(f"📁 Lettura cookie da: {COOKIE_FILE}")
+    log("🚀 MULTI-ACCOUNT SURF COLLECTOR (Supabase)")
     log("="*60)
+    
+    if not SUPABASE_KEY:
+        log("❌ SUPABASE_KEY non impostata")
+        return
     
     # Carica dataset
     X_fast, y_fast, classes_fast = load_faiss_dataset()
@@ -246,11 +253,10 @@ def main():
         log("❌ Dataset non caricato")
         return
     
-    # Legge cookie da file (se non esiste, aspetta)
-    accounts = get_active_cookies_from_file()
+    # Legge cookie da Supabase
+    accounts = get_active_cookies()
     if not accounts:
-        log(f"⚠️ Nessun cookie trovato. Il file {COOKIE_FILE} verrà creato dal cron job.")
-        log("   Il collector rimarrà in attesa...")
+        log("❌ Nessun cookie attivo trovato")
         return
     
     log(f"📋 Account con cookie: {len(accounts)}")
