@@ -17,7 +17,6 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==================== CONFIGURAZIONE ====================
-# Leggi da variabili d'ambiente (impostate su Render)
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://ofijopixtpwahgbwyutc.supabase.co")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
@@ -29,6 +28,7 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def get_active_cookies():
+    """Recupera i cookie attivi da Supabase"""
     if not SUPABASE_KEY:
         log("❌ SUPABASE_KEY non impostata")
         return []
@@ -97,7 +97,7 @@ def centra_figura(image):
         return cv2.resize(image, (DIM, DIM))
     cnt = max(contours, key=cv2.contourArea)
     x, y, w, h = cv2.boundingRect(cnt)
-    crop = image[y:y+h, x:x+w)
+    crop = image[y:y+h, x:x+w]
     return cv2.resize(crop, (DIM, DIM))
 
 def estrai_descrittori(img):
@@ -159,7 +159,7 @@ def crop_safe(img, coords):
     y2 = max(0, min(h, y2))
     if x2 <= x1 or y2 <= y1:
         return None
-    return img[y1:y2, x1:x2]
+    return img[y1:y2, x1:x2]  # CORRETTO: parentesi quadre
 
 # ==================== SURF ACCOUNT ====================
 def surf_account(account, X_fast, y_fast, classes_fast):
