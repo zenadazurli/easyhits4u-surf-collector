@@ -36,7 +36,7 @@ def get_active_cookies():
     try:
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         resp = supabase.table('account_cookies')\
-            .select('nome_utente, divella_format, email')\
+            .select('nome_utente, divella_format, email, sesids, user_id')\
             .eq('status', 'active')\
             .execute()
         
@@ -49,7 +49,9 @@ def get_active_cookies():
             accounts.append({
                 'name': row['nome_utente'],
                 'email': row['email'],
-                'cookie_string': row['divella_format']
+                'cookie_string': row['divella_format'],
+                'sesids': row.get('sesids'),
+                'user_id': row.get('user_id')
             })
         log(f"✅ Caricati {len(accounts)} cookie da Supabase")
         return accounts
@@ -159,7 +161,7 @@ def crop_safe(img, coords):
     y2 = max(0, min(h, y2))
     if x2 <= x1 or y2 <= y1:
         return None
-    return img[y1:y2, x1:x2]  # CORRETTO: parentesi quadre
+    return img[y1:y2, x1:x2]
 
 # ==================== SURF ACCOUNT ====================
 def surf_account(account, X_fast, y_fast, classes_fast):
